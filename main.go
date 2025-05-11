@@ -37,6 +37,9 @@ func run() (string, error) {
 		case "--open":
 			open = true
 		default:
+			if strings.HasPrefix(arg, "-") {
+				return "", invalidFlagErr(arg)
+			}
 			args = append(args, arg)
 		}
 	}
@@ -142,6 +145,11 @@ func copyToClipboard(text string) error {
 	}
 	cmd.Stdin = strings.NewReader(text)
 	return cmd.Run()
+}
+
+func invalidFlagErr(arg string) error {
+	flag, _, _ := strings.Cut(arg, "=")
+	return fmt.Errorf("invalid flag provided: '%s'", flag)
 }
 
 func getVersion() string {
