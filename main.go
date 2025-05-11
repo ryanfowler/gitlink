@@ -12,20 +12,36 @@ import (
 )
 
 func main() {
-	url, err := run()
+	out, err := run()
 	if err != nil {
-		fmt.Printf("Error: %s", err)
+		io.WriteString(os.Stderr, fmt.Sprintf("Error: %s\n", err))
 		os.Exit(1)
 	}
-	io.WriteString(os.Stdout, url)
+	io.WriteString(os.Stdout, out)
 }
 
 func run() (string, error) {
-	if len(os.Args) != 3 {
-		return "", errors.New("usage: gitlink <filepath> <linenumber>")
+	blame := os.Getenv("BLAME") == "true"
+	open := os.Getenv("OPEN") == "true"
+
+	var args []string
+	for _, arg := range os.Args[1:] {
+		switch arg {
+		case "--help", "-h":
+			return helpString, nil
+		case "--blame":
+			blame = true
+		case "--open":
+			open = true
+		default:
+			args = append(args, arg)
+		}
 	}
-	path := os.Args[1]
-	lineNumber := os.Args[2]
+	if len(args) != 2 {
+		return "", errors.New("unexpected arguments\n\nTry 'gitlink --help'")
+	}
+	path := args[0]
+	lineNumber := args[1]
 
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -53,7 +69,7 @@ func run() (string, error) {
 	url := remoteToURL(remote)
 
 	kind := "blob"
-	if os.Getenv("BLAME") == "true" {
+	if blame {
 		kind = "blame"
 	}
 	url = fmt.Sprintf("%s/%s/%s/%s#L%s", url, kind, commit, relPath, lineNumber)
@@ -62,7 +78,7 @@ func run() (string, error) {
 		return "", err
 	}
 
-	if os.Getenv("OPEN") == "true" {
+	if open {
 		if err = openBrowser(url); err != nil {
 			return "", err
 		}
@@ -71,12 +87,20 @@ func run() (string, error) {
 }
 
 func runGit(args ...string) (string, error) {
+	var stderr, stdout strings.Builder
 	cmd := exec.Command("git", args...)
-	out, err := cmd.Output()
-	if err != nil {
+	cmd.Stderr = &stderr
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return "", errors.New(stderr.String())
+		}
+		if stdout.Len() > 0 {
+			return "", errors.New(stdout.String())
+		}
 		return "", err
 	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 func remoteToURL(remote string) string {
@@ -116,3 +140,16 @@ func copyToClipboard(text string) error {
 	cmd.Stdin = strings.NewReader(text)
 	return cmd.Run()
 }
+
+const helpString = `gitlink
+
+Usage: gitlink [OPTIONS] <FILEPATH> <LINE_NUM>
+
+Arguments:
+  <FILEPATH>  Path to the file
+  <LINE_NUM>  Line number to link to
+
+Options:
+  --blame  Link to the git blame view
+  --open   Open link in the default browser
+`
