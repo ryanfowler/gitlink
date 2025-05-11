@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 )
 
@@ -17,7 +18,7 @@ func main() {
 		io.WriteString(os.Stderr, fmt.Sprintf("Error: %s\n", err))
 		os.Exit(1)
 	}
-	io.WriteString(os.Stdout, out)
+	fmt.Fprintln(os.Stdout, out)
 }
 
 func run() (string, error) {
@@ -29,6 +30,8 @@ func run() (string, error) {
 		switch arg {
 		case "--help", "-h":
 			return helpString, nil
+		case "--version", "-V":
+			return getVersion(), nil
 		case "--blame":
 			blame = true
 		case "--open":
@@ -141,6 +144,14 @@ func copyToClipboard(text string) error {
 	return cmd.Run()
 }
 
+func getVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Version == "" {
+		return "dev"
+	}
+	return info.Main.Version
+}
+
 const helpString = `gitlink
 
 Usage: gitlink [OPTIONS] <FILEPATH> <LINE_NUM>
@@ -151,5 +162,4 @@ Arguments:
 
 Options:
   --blame  Link to the git blame view
-  --open   Open link in the default browser
-`
+  --open   Open link in the default browser`
