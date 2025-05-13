@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,54 +14,89 @@ import (
 func main() {
 	out, err := run()
 	if err != nil {
-		io.WriteString(os.Stderr, fmt.Sprintf("Error: %s\n", err))
+		msg := strings.TrimSpace(err.Error())
+		fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
 		os.Exit(1)
 	}
 	fmt.Fprintln(os.Stdout, out)
 }
 
 func run() (string, error) {
-	blame := os.Getenv("BLAME") == "true"
-	open := os.Getenv("OPEN") == "true"
+	c, err := parseCLI()
+	if err != nil {
+		return "", err
+	}
+
+	url, err := getRemoteURL(c.path, c.lineNumber, c.blame)
+	if err != nil {
+		return "", err
+	}
+
+	if err = copyToClipboard(url); err != nil {
+		return "", err
+	}
+
+	if c.open {
+		if err = openBrowser(url); err != nil {
+			return "", err
+		}
+	}
+
+	return url, nil
+}
+
+type config struct {
+	path       string
+	lineNumber string
+	blame      bool
+	open       bool
+}
+
+func parseCLI() (config, error) {
+	c := config{
+		blame: os.Getenv("BLAME") == "true",
+		open:  os.Getenv("OPEN") == "true",
+	}
 
 	var args []string
 	for _, arg := range os.Args[1:] {
 		switch arg {
 		case "--help", "-h":
-			return helpString, nil
+			printAndExit(helpString)
 		case "--version", "-V":
-			return getVersion(), nil
+			printAndExit(getVersion())
 		case "--blame":
-			blame = true
+			c.blame = true
 		case "--open":
-			open = true
+			c.open = true
 		default:
 			if strings.HasPrefix(arg, "-") {
-				return "", invalidFlagErr(arg)
+				return c, invalidFlagErr(arg)
 			}
 			args = append(args, arg)
 		}
 	}
+
 	if len(args) != 2 {
-		return "", errors.New("unexpected arguments\n\nTry 'gitlink --help'")
+		return c, errors.New("unexpected arguments\n\nTry 'gitlink --help'")
 	}
-	path := args[0]
-	lineNumber := args[1]
+	c.path = args[0]
+	c.lineNumber = args[1]
 
-	absPath, err := filepath.Abs(path)
+	absPath, err := filepath.Abs(c.path)
+	if err != nil {
+		return c, err
+	}
+	c.path = absPath
+
+	return c, nil
+}
+
+func getRemoteURL(path, lineNumber string, blame bool) (string, error) {
+	repoRoot, err := runGit("-C", filepath.Dir(path), "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", err
 	}
-
-	repoRoot, err := runGit("-C", filepath.Dir(absPath), "rev-parse", "--show-toplevel")
-	if err != nil {
-		return "", err
-	}
-	relPath, err := filepath.Rel(repoRoot, absPath)
-	if err != nil {
-		return "", err
-	}
-
 	commit, err := runGit("-C", repoRoot, "rev-parse", "HEAD")
 	if err != nil {
 		return "", err
@@ -73,23 +107,17 @@ func run() (string, error) {
 	}
 
 	url := remoteToURL(remote)
+	relPath, err := filepath.Rel(repoRoot, path)
+	if err != nil {
+		return "", err
+	}
 
 	kind := "blob"
 	if blame {
 		kind = "blame"
 	}
-	url = fmt.Sprintf("%s/%s/%s/%s#L%s", url, kind, commit, relPath, lineNumber)
 
-	if err = copyToClipboard(url); err != nil {
-		return "", err
-	}
-
-	if open {
-		if err = openBrowser(url); err != nil {
-			return "", err
-		}
-	}
-	return url, nil
+	return fmt.Sprintf("%s/%s/%s/%s#L%s", url, kind, commit, relPath, lineNumber), nil
 }
 
 func runGit(args ...string) (string, error) {
@@ -158,6 +186,11 @@ func getVersion() string {
 		return "dev"
 	}
 	return info.Main.Version
+}
+
+func printAndExit(s string) {
+	fmt.Fprintln(os.Stdout, s)
+	os.Exit(0)
 }
 
 const helpString = `gitlink
